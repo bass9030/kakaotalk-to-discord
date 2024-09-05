@@ -3,6 +3,8 @@ require('dotenv').config();
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 const kakaoManager = require('./kakaoManager');
 const dgram = require('node:dgram');
+const crypto = require('crypto');
+const si = require('systeminformation');
 
 
 client.on('ready', () => {
@@ -11,14 +13,56 @@ client.on('ready', () => {
 });
 
 const server = dgram.createSocket('udp4');
+let vaildToken;
 
 server.on('error', (err) => {
   console.error(`server error:\n${err.stack}`);
   server.close();
 });
 
-server.on('message', (msg, rinfo) => {
-  console.log(`server got: ${msg} from ${rinfo.address}:${rinfo.port}`);
+function sendPacket(data, rinfo) {
+    server.send(JSON.stringify(data), rinfo.port, rinfo.address);
+}
+
+server.on('message', async (msg, rinfo) => {
+    try {
+        // console.log(msg);
+        let data = JSON.parse(msg);
+        if(data.event == 'CONNECT') {
+            vaildToken = crypto.createHash('sha256').update(`${new Date().toISOString()} ${await si.cpu()}`).digest('base64');
+            sendPacket({event: "AUTH_INFO", data: {token: vaildToken}}, rinfo);
+            return;
+        }
+
+        if(data.token != vaildToken) return;
+
+        switch(data.event) {
+            case 'RECEIVE_MSG':
+                console.log(data);
+                let serverId;
+                let server = await client.guilds.fetch(process.env.DISCORD_SERVER_ID);
+
+                if(!!!kakaoManager.getRoomById(data.data.room.id).length) {
+                    //TODO: create channel
+                    let isGroupChat = data.data.room.isGroupChat;
+                    let name = data.data.room.name;
+                    serverId = (await server.channels.create({
+                        parent: (isGroupChat ? (await kakaoManager.getConfig('group_category')) : (await kakaoManager.getConfig('dm_category'))),
+                        name: name
+                    })).id;
+                    await kakaoManager.addRoom(data.data.room.id, name, isGroupChat, serverId);
+                }else{
+                    serverId = (await kakaoManager.getRoomById(data.data.room.id))[0].dchannel_id;
+                }
+
+                //TODO: send message
+                let messageId = (await (await server.channels.fetch(serverId)).send(data.data.message)).id;
+                kakaoManager.addMessage(data.data.chatLogId, data.data.sender.id, data.data.room.id, data.data.message, messageId);
+                break;
+        }
+    }catch(e) {
+        console.log('failed to parse data:', e);
+    }
 });
 
 server.on('listening', () => {
