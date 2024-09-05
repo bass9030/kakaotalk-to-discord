@@ -81,6 +81,19 @@ async function getRooms(page) {
     }
 }
 
+async function getRoomById(id) {
+    let db;
+    try {
+        db = await pool.getConnection();
+        let rows = await db.query('SELECT * FROM rooms WHERE room_id = ?;', [id]);
+        
+        return rows;
+    }catch(e) {
+    }finally{
+        if(!!db) db.end();
+    }
+}
+
 async function addMessage(id, senderId, roomId, message, dMessageId) {
     let db;
     try {
@@ -161,6 +174,7 @@ module.exports = {
     initDB,
     addRoom,
     getRooms,
+    getRoomById,
     addMessage,
     getMessages,
     removeMessage,
